@@ -16,6 +16,7 @@
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install akshare
 streamlit run app.py
 ```
 
@@ -51,7 +52,16 @@ streamlit run app.py
 
 ## 真实数据
 
-第一版先使用示例数据，避免你一开始卡在 Token、接口权限、数据清洗上。后续可以接：
+页面左侧默认选择「真实数据(AkShare)」。系统会拉取 ETF 日线行情，并缓存到 `data/cache/`，避免每次打开都重新下载。
+
+当前真实数据设置：
+
+- 数据源：AkShare 的东方财富 ETF 日线接口；如果东方财富不可用，自动切到新浪 ETF 日线备用源
+- 价格口径：东方财富为后复权收盘价；新浪备用源为真实收盘价
+- 刷新方式：点击左侧「刷新真实数据」
+- 失败处理：如果网络或接口失败，会自动回退到示例数据，并显示失败原因
+
+后续还可以接：
 
 - AkShare：适合免费原型和日常拉取
 - Tushare Pro：接口更系统，但部分基金数据有积分要求
@@ -66,4 +76,3 @@ streamlit run app.py
 - 轮动策略会有连续亏损期
 - 基金交易有手续费、滑点、折溢价和流动性限制
 - 场外基金还有申赎确认、限购和净值更新时间问题
-

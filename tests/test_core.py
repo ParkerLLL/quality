@@ -2,6 +2,7 @@ import unittest
 
 import pandas as pd
 
+from fund_quant_lab.data_sources import _extract_close_frame
 from fund_quant_lab.risk import summarize_equity
 from fund_quant_lab.sample_data import generate_sample_prices
 from fund_quant_lab.strategy import StrategySettings, backtest_rotation, build_signal_snapshot, target_weights_for_date
@@ -36,7 +37,20 @@ class CoreBehaviorTest(unittest.TestCase):
         self.assertGreater(float(equity["equity"].iloc[-1]), 0.0)
         self.assertIn("max_drawdown", metrics)
 
+    def test_extract_akshare_close_frame(self):
+        raw = pd.DataFrame(
+            {
+                "日期": ["2024-01-02", "2024-01-03"],
+                "收盘": ["1.23", "1.25"],
+                "成交额": [1000, 1200],
+            }
+        )
+        frame = _extract_close_frame(raw, "510300.SH")
+
+        self.assertEqual(frame.columns.tolist(), ["510300.SH"])
+        self.assertEqual(frame.index[0], pd.Timestamp("2024-01-02"))
+        self.assertAlmostEqual(float(frame.iloc[-1, 0]), 1.25)
+
 
 if __name__ == "__main__":
     unittest.main()
-

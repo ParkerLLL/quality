@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -14,6 +16,7 @@ from fund_quant_lab.config import (
     DEFAULT_TRADING_FEE,
     ETF_UNIVERSE,
 )
+from fund_quant_lab.data_sources import DataSourceError, PriceDataResult, load_akshare_cached_prices
 from fund_quant_lab.explain import (
     GLOSSARY,
     beginner_trade_checklist,
@@ -48,8 +51,31 @@ st.markdown(
 
 
 @st.cache_data(show_spinner=False)
-def load_prices() -> pd.DataFrame:
+def load_sample_prices() -> pd.DataFrame:
     return generate_sample_prices()
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
+def load_prices_from_source(
+    source_label: str,
+    start_date: date,
+    end_date: date,
+    refresh_nonce: int,
+) -> tuple[pd.DataFrame, PriceDataResult | None, str | None]:
+    if source_label == "示例数据":
+        return load_sample_prices(), None, None
+
+    codes = [fund.code for fund in ETF_UNIVERSE]
+    try:
+        result = load_akshare_cached_prices(
+            codes,
+            start_date=start_date,
+            end_date=end_date,
+            force_refresh=refresh_nonce > 0,
+        )
+        return result.prices, result, None
+    except DataSourceError as exc:
+        return load_sample_prices(), None, str(exc)
 
 
 def percent_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
@@ -59,9 +85,16 @@ def percent_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return formatted
 
 
-prices = load_prices()
-
 with st.sidebar:
+    st.header("数据源")
+    source_label = st.segmented_control("行情数据", options=["真实数据(AkShare)", "示例数据"], default="真实数据(AkShare)")
+    today = date.today()
+    real_start_date = st.date_input("真实数据起始日", value=date(2022, 1, 1), max_value=today)
+    if "refresh_real_data_nonce" not in st.session_state:
+        st.session_state.refresh_real_data_nonce = 0
+    if st.button("刷新真实数据", disabled=source_label == "示例数据"):
+        st.session_state.refresh_real_data_nonce += 1
+
     st.header("模拟设置")
     initial_capital = st.number_input("模拟本金", min_value=10_000, max_value=5_000_000, value=DEFAULT_INITIAL_CAPITAL, step=10_000)
     rebalance_label = st.segmented_control("调仓频率", options=["每月", "每周"], default="每月")
@@ -71,6 +104,14 @@ with st.sidebar:
     max_weight = st.slider("单只最高仓位", min_value=0.15, max_value=0.50, value=DEFAULT_MAX_WEIGHT, step=0.05)
     cash_buffer = st.slider("保留现金", min_value=0.00, max_value=0.30, value=DEFAULT_CASH_BUFFER, step=0.05)
     trading_fee = st.number_input("单边交易成本", min_value=0.0, max_value=0.01, value=DEFAULT_TRADING_FEE, step=0.0001, format="%.4f")
+
+with st.spinner("正在准备行情数据..."):
+    prices, data_result, data_error = load_prices_from_source(
+        source_label,
+        real_start_date,
+        today,
+        st.session_state.refresh_real_data_nonce,
+    )
 
 settings = StrategySettings(
     lookback_days=lookback_days,
@@ -87,7 +128,16 @@ metrics = summarize_equity(equity.set_index("date")["equity"])
 market_state = classify_market_state(prices)
 
 st.title("Fund Quant Lab")
-st.caption("个人基金量化驾驶舱 · 示例数据 · 模拟账户 · 不自动下单")
+if data_result:
+    source_note = f"{data_result.source} · 最新交易日 {data_result.latest_trading_day or '未知'} · {data_result.price_adjustment}"
+else:
+    source_note = "示例数据 · 模拟账户 · 不自动下单"
+st.caption(f"个人基金量化驾驶舱 · {source_note}")
+
+if data_error:
+    st.warning(f"真实数据暂时不可用，页面已回退到示例数据。原因：{data_error}")
+elif data_result:
+    st.success(data_result.message)
 
 tab_dashboard, tab_backtest, tab_pool, tab_learn, tab_data = st.tabs(
     ["今日驾驶舱", "策略回测", "基金池", "学习卡片", "数据设置"]
@@ -160,6 +210,21 @@ with tab_learn:
 
 with tab_data:
     st.subheader("当前数据源")
-    st.write("第一版使用内置示例行情，方便先学习完整流程。")
-    st.write("准备接真实数据时，可以从 AkShare 开始；真实数据入口已经留在 `fund_quant_lab/data_sources.py`。")
+    if data_result:
+        st.write("当前使用真实数据。行情来自 AkShare 的东方财富 ETF 日线接口。")
+        source_rows = [
+            {"项目": "来源", "内容": data_result.source},
+            {"项目": "价格口径", "内容": data_result.price_adjustment},
+            {"项目": "最新交易日", "内容": data_result.latest_trading_day or "未知"},
+            {"项目": "是否缓存", "内容": "是" if data_result.is_cached else "否"},
+            {"项目": "缓存/刷新时间", "内容": data_result.fetched_at or "未知"},
+        ]
+        st.dataframe(pd.DataFrame(source_rows), width="stretch", hide_index=True)
+        if "未复权" in data_result.price_adjustment:
+            st.info("当前网络下东方财富后复权接口不可用，系统使用新浪真实收盘价备用源。ETF 分红影响通常小于股票，但正式研究时仍建议优先使用后复权数据。")
+        st.caption("如果最新交易日不是最近一个A股交易日，点击左侧“刷新真实数据”。周末和节假日不会产生新交易日。")
+    else:
+        st.write("当前使用内置示例行情。真实数据不可用时，系统会自动回退，避免页面中断。")
+        if data_error:
+            st.error(data_error)
     st.dataframe(prices.tail().reset_index(), width="stretch", hide_index=True)

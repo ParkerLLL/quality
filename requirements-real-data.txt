@@ -1,3 +1,2 @@
-akshare>=1.14
-tushare>=1.4
-
+akshare>=1.18.57
+# Optional later: tushare>=1.4
